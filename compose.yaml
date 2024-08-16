@@ -1,0 +1,37 @@
+version: "3"
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres_database
+    environment:
+      - POSTGRES_USER=paulo
+      - POSTGRES_PASSWORD=123456
+      - POSTGRES_DB=crud
+    ports:
+      - "5432:5432"
+    volumes:
+      - database_postgres:/var/lib/postgresql/data
+    networks:
+      - crud
+
+  app:
+    container_name: app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8080:8080
+    restart: on-failure
+    volumes:
+      - api:/usr/src/app/
+    depends_on:
+      - postgres
+    networks:
+      - crud
+
+volumes:
+  api:
+  database_postgres:
+
+networks:
+  crud:
