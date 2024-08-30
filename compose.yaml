@@ -4,8 +4,8 @@ services:
     image: postgres:latest
     container_name: postgres_database
     environment:
-      - POSTGRES_USER=paulo
-      - POSTGRES_PASSWORD=123456
+      - POSTGRES_USER=scs
+      - POSTGRES_PASSWORD=123
       - POSTGRES_DB=crud
     ports:
       - "5432:5432"
