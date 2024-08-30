@@ -11,11 +11,12 @@ import (
 
 var db *sql.DB
 
-type User struct {
-	Id    int
-	Name  string
-	Email string
-	Age   int
+type Product struct {
+	Id          int
+	Name        string
+	Description string
+	Price       float32
+	Stock       int
 }
 
 func init() {
@@ -36,7 +37,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u := User{}
+	u := Product{}
 
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
@@ -44,7 +45,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("INSERT INTO users (name, email, age) VALUES ($1,$2,$3)", u.Name, u.Email, u.Age)
+	_, err = db.Exec("INSERT INTO product (name, description,price, stock) VALUES ($1,$2,$3,$4)", u.Name, u.Description, u.Price, u.Stock)
 
 	if err != nil {
 		fmt.Println("server failed to handle", err)
@@ -59,100 +60,104 @@ func Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT * FROM users")
-
+	rows, err := db.Query("SELECT * FROM product")
 	if err != nil {
 		fmt.Println("server failed to handle", err)
 		return
 	}
-
 	defer rows.Close()
-	data := make([]User, 0)
+
+	data := make([]Product, 0)
 	for rows.Next() {
-		user := User{}
-		err := rows.Scan(&user.Id, &user.Name, &user.Email, &user.Age)
+		Product := Product{}
+		err := rows.Scan(&Product.Id, &Product.Name, &Product.Description, &Product.Price, &Product.Stock)
 		if err != nil {
 			fmt.Println("server failed to handle", err)
-			return
 		}
-		data = append(data, user)
+		data = append(data, Product)
 	}
-
 	if err = rows.Err(); err != nil {
 		fmt.Println("server failed to handle", err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(data)
-}
-func Delete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "DELETE" {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-	id := r.URL.Query().Get("id")
-
-	_, err := db.Exec("DELETE FROM users WHERE id = $1", id)
-	if err != nil {
-		fmt.Println("server failed to handle", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
 }
 func Update(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "PUT" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
+
 	id := r.URL.Query().Get("id")
-	up := User{}
+	up := Product{}
 	err := json.NewDecoder(r.Body).Decode(&up)
 	if err != nil {
 		fmt.Println("server failed to handle", err)
 		return
 	}
-	row := db.QueryRow("select * from users where id = $1", id)
-	u := User{}
-	err = row.Scan(&u.Id, &u.Name, &u.Email, &u.Age)
+
+	row := db.QueryRow("SELECT * FROM product WHERE id=$1", id)
+
+	u := Product{}
+	err = row.Scan(&u.Id, &u.Name, &u.Description, &u.Price, &u.Stock)
 	switch {
-
 	case err == sql.ErrNoRows:
-
 		http.NotFound(w, r)
-
 		return
-
 	case err != nil:
-
-		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
-
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
-
 	}
+
 	if up.Name != "" {
 		u.Name = up.Name
 	}
-	if up.Email != "" {
-		u.Email = up.Email
+
+	if up.Description != "" {
+		u.Description = up.Description
 	}
-	if up.Age != 0 {
-		u.Age = up.Age
+
+	if up.Price != 0 {
+		u.Price = up.Price
 	}
-	_, err = db.Exec("update users set name = $1, email = $2, age = $3 where id = $4", u.Name, u.Email, u.Age, u.Id)
+
+	if up.Stock != 0 {
+		u.Stock = up.Stock
+	}
+
+	_, err = db.Exec("UPDATE product SET name=$1, description=$2, price=$3, stock=$4 WHERE id=$5;", u.Name, u.Description, u.Price, u.Stock, u.Id)
 	if err != nil {
-		fmt.Println("server failed to handle", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(u)
 }
+func Delete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+
+	_, err := db.Exec("DELETE FROM product WHERE id=$1;", id)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func main() {
 	fmt.Println("server starting")
-	http.HandleFunc("/users/create", Create)
-	http.HandleFunc("/users/read", Read)
-	http.HandleFunc("/users/delete", Delete)
-	http.HandleFunc("/users/update", Update)
+	http.HandleFunc("/product/read", Read)
+	http.HandleFunc("/product/create", Create)
+	http.HandleFunc("/product/delete", Delete)
+	http.HandleFunc("/product/update", Update)
 	http.ListenAndServe(":8080", nil)
 }
