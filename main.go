@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 )
 
@@ -35,7 +36,7 @@ func init() {
 	createTableSQL := `
     CREATE TABLE IF NOT EXISTS product (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL UNIQUE,
         description TEXT,
         price DECIMAL(10, 2) NOT NULL,
         stock INT NOT NULL
@@ -50,38 +51,60 @@ func init() {
 }
 
 func Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-
-	u := Product{}
-	err := json.NewDecoder(r.Body).Decode(&u)
+	var p Product
+	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	_, err = db.Exec("INSERT INTO product (name, description, price, stock) VALUES ($1, $2, $3, $4)",
-		u.Name, u.Description, u.Price, u.Stock)
+	// Validação para garantir que o preço e o estoque não sejam negativos
+	if p.Price < 0 {
+		http.Error(w, "Price cannot be negative", http.StatusBadRequest)
+		return
+	}
+	if p.Stock < 0 {
+		http.Error(w, "Stock cannot be negative", http.StatusBadRequest)
+		return
+	}
+
+	// Verificar se já existe um produto com o mesmo nome
+	var existingId int
+	err = db.QueryRow("SELECT id FROM product WHERE name = $1", p.Name).Scan(&existingId)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Failed to check product name uniqueness", http.StatusInternalServerError)
+		return
+	}
+	if existingId != 0 {
+		http.Error(w, "Product with the same name already exists", http.StatusBadRequest)
+		return
+	}
+
+	// Inserindo o produto e retornando o ID gerado
+	err = db.QueryRow(
+		"INSERT INTO product (name, description, price, stock) VALUES ($1, $2, $3, $4) RETURNING id",
+		p.Name, p.Description, p.Price, p.Stock).Scan(&p.Id)
 	if err != nil {
 		http.Error(w, "Failed to insert product", http.StatusInternalServerError)
 		return
 	}
 
+	// Retornando o produto criado
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(p); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func Read(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
+	// Captura o ID do produto se ele estiver presente
+	params := mux.Vars(r)
+	idStr, exists := params["productId"]
 
-	id := r.URL.Query().Get("id")
-
-	if id == "" {
-		// Se não houver ID na URL, retorna todos os produtos
+	// Se o ID não existir, retorna todos os produtos
+	if !exists {
 		rows, err := db.Query("SELECT * FROM product")
 		if err != nil {
 			http.Error(w, "Failed to query products", http.StatusInternalServerError)
@@ -89,7 +112,7 @@ func Read(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rows.Close()
 
-		data := make([]Product, 0)
+		products := make([]Product, 0)
 		for rows.Next() {
 			var p Product
 			err := rows.Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
@@ -97,7 +120,7 @@ func Read(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Failed to scan product", http.StatusInternalServerError)
 				return
 			}
-			data = append(data, p)
+			products = append(products, p)
 		}
 		if err = rows.Err(); err != nil {
 			http.Error(w, "Failed to iterate over rows", http.StatusInternalServerError)
@@ -106,33 +129,22 @@ func Read(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(data); err != nil {
+		if err := json.NewEncoder(w).Encode(products); err != nil {
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
 		return
 	}
 
-	// Se houver um ID na URL, retorna o produto com esse ID
-	ReadId(w, r)
-}
-
-func ReadId(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-
-	idStr := r.URL.Query().Get("id")
+	// Caso contrário, tenta converter o ID e buscar o produto específico
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		http.Error(w, "Invalid ID format", http.StatusBadRequest)
 		return
 	}
 
-	row := db.QueryRow("SELECT * FROM product WHERE id = $1", id)
 	var p Product
-	err = row.Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
+	err = db.QueryRow("SELECT * FROM product WHERE id = $1", id).Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Product not found", http.StatusNotFound)
 		return
@@ -150,41 +162,53 @@ func ReadId(w http.ResponseWriter, r *http.Request) {
 }
 
 func Update(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-
-	idStr := r.URL.Query().Get("id")
+	params := mux.Vars(r)
+	idStr := params["productId"]
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		http.Error(w, "Invalid ID format", http.StatusBadRequest)
 		return
 	}
 
-	up := Product{}
-	err = json.NewDecoder(r.Body).Decode(&up)
+	var p Product
+	err = json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
+	// Validação para garantir que o preço e o estoque não sejam negativos
+	if p.Price < 0 {
+		http.Error(w, "Price cannot be negative", http.StatusBadRequest)
+		return
+	}
+	if p.Stock < 0 {
+		http.Error(w, "Stock cannot be negative", http.StatusBadRequest)
+		return
+	}
+
+	// Verificar se já existe um produto com o mesmo nome, exceto o atual
+	var existingId int
+	err = db.QueryRow("SELECT id FROM product WHERE name = $1 AND id != $2", p.Name, id).Scan(&existingId)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Failed to check product name uniqueness", http.StatusInternalServerError)
+		return
+	}
+	if existingId != 0 {
+		http.Error(w, "Product with the same name already exists", http.StatusBadRequest)
+		return
+	}
+
+	// Atualizando o produto
 	_, err = db.Exec("UPDATE product SET name=$1, description=$2, price=$3, stock=$4 WHERE id=$5",
-		up.Name, up.Description, up.Price, up.Stock, id)
+		p.Name, p.Description, p.Price, p.Stock, id)
 	if err != nil {
 		http.Error(w, "Failed to update product", http.StatusInternalServerError)
 		return
 	}
 
-	// Retorna o produto atualizado
-	row := db.QueryRow("SELECT * FROM product WHERE id = $1", id)
-	var p Product
-	err = row.Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
-	if err != nil {
-		http.Error(w, "Failed to query updated product", http.StatusInternalServerError)
-		return
-	}
-
+	// Retornar o produto atualizado
+	p.Id = id // Certifica-se de que o ID do produto atualizado seja retornado corretamente
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(p); err != nil {
@@ -194,32 +218,52 @@ func Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func Delete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-
-	idStr := r.URL.Query().Get("id")
+	params := mux.Vars(r)
+	idStr := params["productId"]
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		http.Error(w, "Invalid ID format", http.StatusBadRequest)
 		return
 	}
 
+	// Verificar se o produto existe antes de deletar
+	var p Product
+	err = db.QueryRow("SELECT * FROM product WHERE id = $1", id).Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
+	if err == sql.ErrNoRows {
+		http.Error(w, "Product not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "Failed to query product", http.StatusInternalServerError)
+		return
+	}
+
+	// Deletar o produto
 	_, err = db.Exec("DELETE FROM product WHERE id=$1", id)
 	if err != nil {
 		http.Error(w, "Failed to delete product", http.StatusInternalServerError)
 		return
 	}
 
+	// Retornando o produto deletado
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(p); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func main() {
 	fmt.Println("Server starting")
-	http.HandleFunc("/read", Read)
-	http.HandleFunc("/create", Create)
-	http.HandleFunc("/delete", Delete)
-	http.HandleFunc("/update", Update)
-	http.ListenAndServe(":8080", nil)
+
+	// Usando o gorilla/mux para rotas com parâmetros
+	r := mux.NewRouter()
+
+	r.HandleFunc("/products", Create).Methods("POST")
+	r.HandleFunc("/products", Read).Methods("GET")
+	r.HandleFunc("/products/{productId}", Read).Methods("GET")
+	r.HandleFunc("/products/{productId}", Update).Methods("PUT")
+	r.HandleFunc("/products/{productId}", Delete).Methods("DELETE")
+
+	http.ListenAndServe(":8080", r)
 }
