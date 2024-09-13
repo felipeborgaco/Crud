@@ -58,7 +58,6 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validação para garantir que o preço e o estoque não sejam negativos
 	if p.Price < 0 {
 		http.Error(w, "Price cannot be negative", http.StatusBadRequest)
 		return
@@ -67,8 +66,6 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Stock cannot be negative", http.StatusBadRequest)
 		return
 	}
-
-	// Verificar se já existe um produto com o mesmo nome
 	var existingId int
 	err = db.QueryRow("SELECT id FROM product WHERE name = $1", p.Name).Scan(&existingId)
 	if err != nil && err != sql.ErrNoRows {
@@ -79,8 +76,6 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Product with the same name already exists", http.StatusBadRequest)
 		return
 	}
-
-	// Inserindo o produto e retornando o ID gerado
 	err = db.QueryRow(
 		"INSERT INTO product (name, description, price, stock) VALUES ($1, $2, $3, $4) RETURNING id",
 		p.Name, p.Description, p.Price, p.Stock).Scan(&p.Id)
@@ -99,11 +94,9 @@ func Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func Read(w http.ResponseWriter, r *http.Request) {
-	// Captura o ID do produto se ele estiver presente
 	params := mux.Vars(r)
 	idStr, exists := params["productId"]
 
-	// Se o ID não existir, retorna todos os produtos
 	if !exists {
 		rows, err := db.Query("SELECT * FROM product")
 		if err != nil {
@@ -136,7 +129,6 @@ func Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Caso contrário, tenta converter o ID e buscar o produto específico
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		http.Error(w, "Invalid ID format", http.StatusBadRequest)
@@ -177,7 +169,6 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validação para garantir que o preço e o estoque não sejam negativos
 	if p.Price < 0 {
 		http.Error(w, "Price cannot be negative", http.StatusBadRequest)
 		return
@@ -187,7 +178,6 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verificar se já existe um produto com o mesmo nome, exceto o atual
 	var existingId int
 	err = db.QueryRow("SELECT id FROM product WHERE name = $1 AND id != $2", p.Name, id).Scan(&existingId)
 	if err != nil && err != sql.ErrNoRows {
@@ -199,7 +189,6 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Atualizando o produto
 	_, err = db.Exec("UPDATE product SET name=$1, description=$2, price=$3, stock=$4 WHERE id=$5",
 		p.Name, p.Description, p.Price, p.Stock, id)
 	if err != nil {
@@ -207,7 +196,6 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retornar o produto atualizado
 	p.Id = id // Certifica-se de que o ID do produto atualizado seja retornado corretamente
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -226,7 +214,6 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verificar se o produto existe antes de deletar
 	var p Product
 	err = db.QueryRow("SELECT * FROM product WHERE id = $1", id).Scan(&p.Id, &p.Name, &p.Description, &p.Price, &p.Stock)
 	if err == sql.ErrNoRows {
@@ -244,7 +231,6 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retornando o produto deletado
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(p); err != nil {
@@ -256,7 +242,6 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 func main() {
 	fmt.Println("Server starting")
 
-	// Usando o gorilla/mux para rotas com parâmetros
 	r := mux.NewRouter()
 
 	r.HandleFunc("/products", Create).Methods("POST")
